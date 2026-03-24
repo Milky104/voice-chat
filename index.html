@@ -6,27 +6,36 @@
     body { margin:0; font-family:Arial; background:#36393f; color:white; }
     #app { display:flex; height:100vh; }
 
-    /* Chat column */
     #chat { flex:1; display:flex; flex-direction:column; }
     #messages { flex:1; padding:15px; overflow:auto; background:#2f3136; }
     #input { display:flex; padding:10px; background:#40444b; }
     input { flex:1; padding:10px; border:none; border-radius:8px; }
     button { padding:10px; margin-left:5px; border:none; border-radius:5px; cursor:pointer; background:#7289da; color:white; }
 
-    /* Users sidebar */
     #users { width:220px; background:#2f3136; padding:10px; border-left:1px solid #202225; }
     .user { display:flex; align-items:center; margin-bottom:10px; }
-    .avatar { width:30px; height:30px; border-radius:50%; margin-right:10px; display:inline-flex; justify-content:center; align-items:center; color:white; font-weight:bold; transition: box-shadow 0.2s ease; }
 
-    /* Speaking glow */
+    .avatar {
+      width:30px; height:30px; border-radius:50%;
+      margin-right:10px;
+      display:flex; align-items:center; justify-content:center;
+      font-weight:bold; color:white;
+      transition: box-shadow 0.2s;
+    }
+
     .speaking { box-shadow: 0 0 10px 3px #43b581; }
 
-    /* Message bubbles */
-    .message { background:#40444b; padding:8px 12px; border-radius:8px; margin-bottom:8px; max-width:70%; display:flex; align-items:center; }
-    .message b { color:#7289da; margin-right:5px; }
+    .message {
+      background:#40444b;
+      padding:8px 12px;
+      border-radius:8px;
+      margin-bottom:8px;
+      display:flex;
+      align-items:center;
+      max-width:70%;
+    }
 
-    /* Voice button spacing */
-    #voiceButtons button { margin-left:5px; }
+    .message b { color:#7289da; margin-right:5px; }
   </style>
 </head>
 <body>
@@ -39,11 +48,13 @@ const room = prompt("Enter room code:");
 <div id="app">
   <div id="chat">
     <div id="messages"></div>
+
     <div id="input">
       <input id="msg" placeholder="Message..." />
       <button onclick="sendMsg()">Send</button>
     </div>
-    <div id="voiceButtons" style="padding:10px; background:#40444b;">
+
+    <div style="padding:10px; background:#40444b;">
       <button onclick="startVoice()">Join Voice</button>
       <button onclick="toggleMute()">Mute</button>
       <button onclick="toggleDeafen()">Deafen</button>
@@ -61,7 +72,10 @@ const room = prompt("Enter room code:");
 <script>
 const socket = io();
 
-// Helper: string → color
+const messages = document.getElementById("messages");
+const userList = document.getElementById("userList");
+
+// color generator
 function stringToColor(str){
   let hash = 0;
   for(let i=0;i<str.length;i++){ hash = str.charCodeAt(i) + ((hash<<5)-hash); }
@@ -73,12 +87,10 @@ function stringToColor(str){
   return color;
 }
 
-// Chat logic
-const messages = document.getElementById("messages");
-const userList = document.getElementById("userList");
-
+// join room
 socket.emit("join-room", { room, username });
 
+// send message
 function sendMsg(){
   const msg = document.getElementById("msg").value;
   if(!msg) return;
@@ -86,38 +98,46 @@ function sendMsg(){
   document.getElementById("msg").value = "";
 }
 
-// Press Enter to send
-document.getElementById("msg").addEventListener("keydown", (e) => {
-  if(e.key === "Enter"){
-    sendMsg();
-  }
+// enter to send
+document.getElementById("msg").addEventListener("keydown", e=>{
+  if(e.key === "Enter") sendMsg();
 });
 
-// Render chat messages
+// 🆕 LOAD MESSAGE HISTORY
+socket.on("chat-history", history => {
+  history.forEach(addMessage);
+  messages.scrollTop = messages.scrollHeight;
+});
+
+// receive message
 socket.on("chat", data => {
+  addMessage(data);
+});
+
+// render message
+function addMessage(data){
   const div = document.createElement("div");
   div.className = "message";
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
   avatar.style.backgroundColor = stringToColor(data.user);
-  avatar.textContent = data.user.charAt(0).toUpperCase();
+  avatar.textContent = data.user[0].toUpperCase();
 
   const text = document.createElement("span");
   text.innerHTML = `<b>${data.user}</b>: ${data.text}`;
 
   div.appendChild(avatar);
   div.appendChild(text);
-
   messages.appendChild(div);
-  messages.scrollTop = messages.scrollHeight;
-});
+}
 
-// Render users with avatars + speaking glow
+// user list
 let userAvatars = {};
 socket.on("users", users => {
   userList.innerHTML = "";
-  userAvatars = {}; // reset
+  userAvatars = {};
+
   users.forEach(u => {
     const div = document.createElement("div");
     div.className = "user";
@@ -125,7 +145,8 @@ socket.on("users", users => {
     const avatar = document.createElement("div");
     avatar.className = "avatar";
     avatar.style.backgroundColor = stringToColor(u);
-    avatar.textContent = u.charAt(0).toUpperCase();
+    avatar.textContent = u[0].toUpperCase();
+
     userAvatars[u] = avatar;
 
     const name = document.createElement("div");
@@ -137,25 +158,26 @@ socket.on("users", users => {
   });
 });
 
-// Voice chat logic
+// VOICE
 let localStream;
 let peers = {};
 let isMuted = false;
 let isDeaf = false;
 
-// Speaking detection
+// speaking detection
 let audioContext, analyser, dataArray;
 
 async function startVoice(){
   if(localStream) return;
+
   localStream = await navigator.mediaDevices.getUserMedia({audio:true});
   socket.emit("join-voice");
 
-  // Setup speaking detection
   audioContext = new AudioContext();
   const source = audioContext.createMediaStreamSource(localStream);
   analyser = audioContext.createAnalyser();
   analyser.fftSize = 256;
+
   source.connect(analyser);
   dataArray = new Uint8Array(analyser.frequencyBinCount);
 
@@ -165,7 +187,9 @@ async function startVoice(){
 function checkSpeaking(){
   analyser.getByteFrequencyData(dataArray);
   const volume = dataArray.reduce((a,b)=>a+b)/dataArray.length;
-  socket.emit("speaking", volume > 15); // send to server if speaking
+
+  socket.emit("speaking", volume > 15);
+
   requestAnimationFrame(checkSpeaking);
 }
 
@@ -181,27 +205,29 @@ function toggleDeafen(){
 
 function leaveVoice(){
   if(localStream){
-    localStream.getTracks().forEach(track => track.stop());
+    localStream.getTracks().forEach(t=>t.stop());
     localStream = null;
   }
+
   for(let id in peers){
     peers[id].close();
     delete peers[id];
   }
 }
 
-// WebRTC events
+// WebRTC
 socket.on("user-joined", id => {
-  const pc = createPeer(id, true);
-  peers[id] = pc;
+  peers[id] = createPeer(id, true);
 });
 
 socket.on("offer", async ({offer, from}) => {
   const pc = createPeer(from, false);
   peers[from] = pc;
+
   await pc.setRemoteDescription(offer);
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
+
   socket.emit("answer", {answer, to:from});
 });
 
@@ -214,33 +240,42 @@ socket.on("ice", ({candidate, from}) => {
 });
 
 function createPeer(id, initiator){
-  const pc = new RTCPeerConnection({ iceServers:[{urls:"stun:stun.l.google.com:19302"}] });
-  if(localStream) localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+  const pc = new RTCPeerConnection({
+    iceServers:[{urls:"stun:stun.l.google.com:19302"}]
+  });
+
+  if(localStream){
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+  }
+
   pc.ontrack = e => {
     const audio = document.createElement("audio");
     audio.srcObject = e.streams[0];
     audio.autoplay = true;
     document.body.appendChild(audio);
   };
+
   pc.onicecandidate = e => {
     if(e.candidate){
       socket.emit("ice", {candidate:e.candidate, to:id});
     }
   };
+
   if(initiator){
     pc.createOffer().then(o=>{
       pc.setLocalDescription(o);
       socket.emit("offer", {offer:o, to:id});
     });
   }
+
   return pc;
 }
 
-// Receive speaking status from other users
+// speaking indicator (others)
 socket.on("speaking", ({user, speaking}) => {
   if(userAvatars[user]){
-    if(speaking){ userAvatars[user].classList.add("speaking"); }
-    else{ userAvatars[user].classList.remove("speaking"); }
+    if(speaking) userAvatars[user].classList.add("speaking");
+    else userAvatars[user].classList.remove("speaking");
   }
 });
 </script>
