@@ -1,66 +1,145 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Chat</title>
+  <style>
+    body { margin:0; font-family:Arial; background:#2f3136; color:white; }
+    #app { display:flex; height:100vh; }
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+    #chat { flex:1; display:flex; flex-direction:column; }
+    #messages { flex:1; padding:10px; overflow:auto; }
+    #input { display:flex; padding:10px; background:#40444b; }
 
-app.use(express.static(__dirname));
+    input { flex:1; padding:10px; border:none; border-radius:5px; }
+    button { margin-left:5px; padding:10px; border:none; border-radius:5px; background:#7289da; color:white; }
 
-let rooms = {};      // stores {roomName: [users]}
-let messages = {};   // stores {roomName: [messages]}
+    #users { width:200px; background:#202225; padding:10px; }
 
-io.on('connection', socket => {
+    .message { margin-bottom:8px; }
+    .avatar { width:25px; height:25px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; margin-right:5px; }
+    .speaking { box-shadow:0 0 10px #43b581; }
+  </style>
+</head>
+<body>
 
-  socket.on('join-room', ({ room, username }) => {
-    socket.join(room);
+<script>
+const username = prompt("Name:");
+const room = prompt("Room:");
+</script>
 
-    // Init room arrays if needed
-    if(!rooms[room]) rooms[room] = [];
-    if(!messages[room]) messages[room] = [];
+<div id="app">
+  <div id="chat">
+    <div id="messages"></div>
 
-    rooms[room].push({ id: socket.id, username });
-    socket.room = room;
-    socket.username = username;
+    <div id="input">
+      <input id="msg" placeholder="Message..." />
+      <button onclick="sendMsg()">Send</button>
+    </div>
 
-    // Send user list
-    io.to(room).emit('users', rooms[room].map(u => u.username));
+    <div style="padding:10px;">
+      <button onclick="startVoice()">Join Voice</button>
+      <button onclick="leaveVoice()">Leave Voice</button>
+    </div>
+  </div>
 
-    // Send message history to new user
-    socket.emit('chat-history', messages[room]);
-  });
+  <div id="users">
+    <h3>Users</h3>
+    <div id="userList"></div>
+  </div>
+</div>
 
-  socket.on('chat', msg => {
-    const messageData = { user: socket.username, text: msg };
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+const messages = document.getElementById("messages");
+const userList = document.getElementById("userList");
 
-    // Save message
-    if(socket.room) messages[socket.room].push(messageData);
+function color(str){
+  let hash = 0;
+  for(let i=0;i<str.length;i++) hash = str.charCodeAt(i)+((hash<<5)-hash);
+  let c = '#';
+  for(let i=0;i<3;i++){
+    const v = (hash>>(i*8))&255;
+    c += ('00'+v.toString(16)).slice(-2);
+  }
+  return c;
+}
 
-    // Broadcast
-    io.to(socket.room).emit('chat', messageData);
-  });
+socket.emit("join-room",{room,username});
 
-  socket.on('disconnect', () => {
-    if(!socket.room) return;
+// send message
+function sendMsg(){
+  const msg = document.getElementById("msg").value;
+  if(!msg) return;
+  socket.emit("chat", msg);
+  document.getElementById("msg").value="";
+}
 
-    rooms[socket.room] = rooms[socket.room].filter(u => u.id !== socket.id);
-
-    io.to(socket.room).emit('users', rooms[socket.room].map(u => u.username));
-  });
-
-  // Voice stuff
-  socket.on('join-voice', () => {
-    if(socket.room) socket.to(socket.room).emit('user-joined', socket.id);
-  });
-  socket.on('offer', data => { io.to(data.to).emit('offer', {...data, from: socket.id}); });
-  socket.on('answer', data => { io.to(data.to).emit('answer', {...data, from: socket.id}); });
-  socket.on('ice', data => { io.to(data.to).emit('ice', {...data, from: socket.id}); });
-  socket.on('speaking', speaking => {
-    if(socket.room) socket.to(socket.room).emit('speaking', { user: socket.username, speaking });
-  });
-
+// enter key
+document.getElementById("msg").addEventListener("keydown",e=>{
+  if(e.key==="Enter") sendMsg();
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log('Server running on port ' + PORT));
+// history
+socket.on("chat-history", history=>{
+  history.forEach(addMsg);
+});
+
+// new message
+socket.on("chat", addMsg);
+
+function addMsg(data){
+  const div=document.createElement("div");
+  div.className="message";
+
+  const av=document.createElement("span");
+  av.className="avatar";
+  av.style.background=color(data.user);
+  av.textContent=data.user[0].toUpperCase();
+
+  div.appendChild(av);
+  div.innerHTML+=`<b>${data.user}</b>: ${data.text}`;
+
+  messages.appendChild(div);
+}
+
+// users
+let avatars={};
+socket.on("users", users=>{
+  userList.innerHTML="";
+  avatars={};
+
+  users.forEach(u=>{
+    const d=document.createElement("div");
+
+    const a=document.createElement("span");
+    a.className="avatar";
+    a.style.background=color(u);
+    a.textContent=u[0].toUpperCase();
+
+    avatars[u]=a;
+
+    d.appendChild(a);
+    d.innerHTML+=u;
+    userList.appendChild(d);
+  });
+});
+
+// voice (basic)
+let localStream;
+async function startVoice(){
+  if(localStream) return;
+  localStream = await navigator.mediaDevices.getUserMedia({audio:true});
+  socket.emit("join-voice");
+}
+
+function leaveVoice(){
+  if(localStream){
+    localStream.getTracks().forEach(t=>t.stop());
+    localStream=null;
+  }
+}
+</script>
+
+</body>
+</html>
